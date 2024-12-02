@@ -1,0 +1,3 @@
+(library
+ (name advent2024)
+ (libraries core))
