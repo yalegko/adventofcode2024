@@ -104,17 +104,19 @@ let solve2 fname =
          field.(x).(y) <- '#';
          let res = has_loop field ~from:start in
          field.(x).(y) <- '.';
-         res
-         )
+         res)
   |> PointsSet.of_list |> Set.length
 
 let time f x =
-  let start = Time_float.now() in
+  let start = Time_float.now () in
   let fx = f x in
-  let elapsed = Time_float.diff (Time_float.now()) start in
+  let elapsed = Time_float.diff (Time_float.now ()) start in
   Printf.printf "Execution time: %s\n" (Time_float.Span.to_string_hum elapsed);
   fx
 
-let () =
-  assert (time solve2 "test/day06.txt" = 6);
-  assert (time solve2 "data/day06.txt" = 1663)
+let () = assert (solve2 "test/day06.txt" = 6)
+
+(* Slow and executes on every utop open *)
+(*
+  let () = assert (time solve2 "data/day06.txt" = 1663) 
+*)

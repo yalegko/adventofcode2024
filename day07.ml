@@ -65,6 +65,9 @@ let solve2 fname =
   |> List.filter ~f:can_be_solved2
   |> List.map ~f:fst |> List.reduce_exn ~f:( + )
 
-let () =
-  assert (solve2 "test/day07.txt" = 11387);
-  assert (solve2 "data/day07.txt" = 145397611075341)
+let () = assert (solve2 "test/day07.txt" = 11387)
+
+(* Slow and executes on every utop open *)
+(*
+   let () = assert (Util.time solve2 "data/day07.txt" = 145397611075341)
+*)
