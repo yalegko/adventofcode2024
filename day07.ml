@@ -33,20 +33,26 @@ let () =
   assert (solve1 "test/day07.txt" = 3749);
   assert (solve1 "data/day07.txt" = 1620690235709)
 
-let concat_numbers x y = string_of_int x ^ string_of_int y |> int_of_string
-
-let can_be_solved2 (res, terms) =
+let can_solve ~res ~operations terms =
   let rec loop acc rest_terms =
     if acc > res then false
     else
       match rest_terms with
       | [] -> acc = res
       | x :: tail ->
-          loop (acc + x) tail
-          || loop (acc * x) tail
-          || loop (concat_numbers acc x) tail
+          operations
+          |> List.find ~f:(fun op -> loop (op acc x) tail)
+          |> Option.is_some
   in
-  loop (List.hd_exn terms) (List.tl_exn terms)
+  match terms with
+  | [] -> failwith "Empty terms"
+  | [ x ] -> x = res
+  | x :: tail -> loop x tail
+
+let concat_numbers x y = string_of_int x ^ string_of_int y |> int_of_string
+
+let can_be_solved2 (res, terms) =
+  can_solve ~res ~operations:[ ( + ); ( * ); concat_numbers ] terms
 
 let () =
   assert ("190: 10 19" |> parse |> can_be_solved2);
@@ -65,9 +71,6 @@ let solve2 fname =
   |> List.filter ~f:can_be_solved2
   |> List.map ~f:fst |> List.reduce_exn ~f:( + )
 
-let () = assert (solve2 "test/day07.txt" = 11387)
-
-(* Slow and executes on every utop open *)
-(*
-   let () = assert (Util.time solve2 "data/day07.txt" = 145397611075341)
-*)
+let () =
+  assert (solve2 "test/day07.txt" = 11387);
+  assert (Util.time solve2 "data/day07.txt" = 145397611075341)
