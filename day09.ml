@@ -1,18 +1,17 @@
 open Core
 
-let read_disk fname = In_channel.read_all fname |> String.to_list
-
 type block = File of int * int | Space of int
 [@@deriving compare, equal, sexp]
 
 let is_empty_space = function Space 0 -> true | _ -> false
 
-let flatten_disk disk =
-  disk
+let read_disk fname =
+  In_channel.read_all fname |> String.to_list
   |> List.folding_map ~init:(true, 0) ~f:(fun (is_file, id) ch ->
          let amount = int_of_char ch - int_of_char '0' in
          let block = if is_file then File (id, amount) else Space amount in
-         ((not is_file, if is_file then id + 1 else id), block))
+         let next_id = if is_file then id + 1 else id in
+         ((not is_file, next_id), block))
   |> List.filter ~f:(Fun.negate is_empty_space)
 
 let defragment_one blocks =
@@ -55,17 +54,16 @@ let () =
 let defragment blocks =
   let rec loop res rest =
     match rest with
-    | [] -> res
-    | (File (_id, _size) as f) :: tail -> loop (f :: res) tail
-    (* defragment only empty space blocks *)
+    | [] -> List.rev res
+    | (File _ as f) :: tail -> loop (f :: res) tail
     | Space _ :: _tail -> (
         match defragment_one rest with
-        | [] -> res
+        | [] -> List.rev res
+        | (File _ as f) :: tail -> loop (f :: res) tail
         (* if we have empty block at the end of the tail -- iterate once more w/o it *)
-        | (Space _ as s) :: tail -> loop res (s :: tail)
-        | (File (_, _) as f) :: tail -> loop (f :: res) tail)
+        | (Space _ as s) :: tail -> loop res (s :: tail))
   in
-  loop [] blocks |> List.rev
+  loop [] blocks
 
 let hash blocks =
   let rec sum id i n = if n = 0 then 0 else (id * i) + sum id (i + 1) (n - 1) in
@@ -78,7 +76,7 @@ let hash blocks =
       (res + s, new_idx))
   |> fst
 
-let solve1 fname = read_disk fname |> flatten_disk |> defragment |> hash
+let solve1 fname = read_disk fname |> defragment |> hash
 let () = assert (solve1 "test/day09.txt" = 1928)
 (* Slowish *)
 (* let () = assert (Util.time solve1 "data/day09.txt" = 6435922584968) *)
@@ -106,40 +104,22 @@ let insert_block blocks f =
            ])
   | _ -> failwith "unreachable"
 
-let join_spaces blocks =
-  let rec loop res blocks =
-    match blocks with
-    | [] -> res
-    | Space n :: Space m :: tail -> loop (Space (n + m) :: res) tail
-    | Space 0 :: tail -> loop res tail
-    | f :: tail -> loop (f :: res) tail
-  in
-  loop [] blocks |> List.rev
-
-let () =
-  assert (
-    List.equal equal_block
-      (join_spaces
-         [ Space 1; File (1337, 7); Space 1; Space 1; File (1339, 1) ])
-      [ Space 1; File (1337, 1); Space 2; File (1339, 7) ])
-
 let defragment2 blocks =
-  let rec loop ~blocks i =
-    let idx = List.length blocks + i in
+  let rec loop ~blocks n =
+    let idx = List.length blocks + n in
     match List.nth blocks idx with
     | None -> blocks
-    | Some (Space _) -> loop ~blocks (i - 1)
+    | Some (Space _) -> loop ~blocks (n - 1)
     | Some (File (_, _) as f) -> (
         match insert_block (List.take blocks idx) f with
-        | None -> loop ~blocks (i - 1)
+        | None -> loop ~blocks (n - 1)
         | Some head ->
             let tail = List.drop blocks (idx + 1) in
-            let new_blocks = List.append head tail in
-            loop ~blocks:new_blocks (i - 1))
+            loop ~blocks:(List.append head tail) (n - 1))
   in
-  loop ~blocks (-1) |> join_spaces
+  loop ~blocks (-1)
 
-let solve2 fname = read_disk fname |> flatten_disk |> defragment2 |> hash
+let solve2 fname = read_disk fname |> defragment2 |> hash
 let () = assert (solve2 "test/day09.txt" = 2858)
 (* Slowish *)
-(* let () = assert (Util.time solve1 "data/day09.txt" = 6469636832766) *)
+(* let () = assert (Util.time solve2 "data/day09.txt" = 6469636832766) *)
