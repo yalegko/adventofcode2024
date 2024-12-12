@@ -6,7 +6,7 @@ let split_int_by_halves n =
   let half_digits = Int.pow 10 (num_digits n / 2) in
   (n / half_digits, n mod half_digits)
 
-let rec count_stone =
+let count_stone =
   let cache = Hashtbl.Poly.create () in
   let rec count n stone =
     let res =

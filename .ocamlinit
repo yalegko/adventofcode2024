@@ -2,6 +2,7 @@
 
 #require "re";;
 #require "core.top";;
+#require "ppx_hash";;
 #require "ppx_jane";;
 #require "ppx_compare";;
 #require "ppx_sexp_conv";;
