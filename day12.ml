@@ -54,25 +54,25 @@ let () =
 
 let num_corners region =
   let region_points = Myfield.PointSet.of_list region in
-  let c1 = [ (0, -1); (-1, -1); (-1, 0) ] (* top left corner *)
-  and c2 = [ (-1, 0); (-1, 1); (0, 1) ] (* top right corner *)
-  and c3 = [ (0, 1); (1, 1); (1, 0) ] (* down right corner *)
-  and c4 = [ (1, 0); (1, -1); (0, -1) ] (* down left corner *) in
-  let region_intersections (x, y) direction =
+  let num_region_intersections (x, y) direction =
     List.map direction ~f:(fun (dx, dy) -> (x + dx, y + dy))
     |> List.count ~f:(Set.mem region_points)
   in
 
+  let c1 = [ (0, -1); (-1, -1); (-1, 0) ] (* top left corner *)
+  and c2 = [ (-1, 0); (-1, 1); (0, 1) ] (* top right corner *)
+  and c3 = [ (0, 1); (1, 1); (1, 0) ] (* down right corner *)
+  and c4 = [ (1, 0); (1, -1); (0, -1) ] (* down left corner *) in
   let num_point_corners p =
     [ c1; c2; c3; c4 ]
     |> List.count ~f:(fun direction ->
            let diagonal = List.nth_exn direction 1 in
-           let intersection = region_intersections p direction in
+           let intersection = num_region_intersections p direction in
            let is_outer_corner = intersection = 0
            and is_inner_corner =
-             intersection = 2 && region_intersections p [ diagonal ] = 0
+             intersection = 2 && num_region_intersections p [ diagonal ] = 0
            and touching_corner =
-             intersection = 1 && region_intersections p [ diagonal ] = 1
+             intersection = 1 && num_region_intersections p [ diagonal ] = 1
            in
            is_inner_corner || is_outer_corner || touching_corner)
   in
@@ -91,13 +91,9 @@ let field_price field =
 
 let () =
   let field = Myfield.of_string "AAAA\nBBCD\nBBCC\nEEEC" in
-  assert (field_price field = 80)
-
-let () =
+  assert (field_price field = 80);
   let field = Myfield.of_string "EEEEE\nEXXXX\nEEEEE\nEXXXX\nEEEEE" in
-  assert (field_price field = 236)
-
-let () =
+  assert (field_price field = 236);
   let field =
     Myfield.of_string "AAAAAA\nAAABBA\nAAABBA\nABBAAA\nABBAAA\nAAAAAA"
   in
