@@ -1,7 +1,7 @@
 open Core
 
 module Point = struct
-  type t = int * int [@@deriving compare, sexp, hash]
+  type t = int * int [@@deriving compare, sexp, hash, equal]
 
   let to_string p = p |> sexp_of_t |> Sexp.to_string_hum
   let neighbors (x, y) = [ (x + 1, y); (x, y + 1); (x - 1, y); (x, y - 1) ]

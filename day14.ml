@@ -60,49 +60,35 @@ let forms_frame robots =
   List.iter robots ~f:(fun r -> Hashtbl.set positions ~key:r.pos ~data:());
   let is_robot r = Hashtbl.mem positions r in
 
-  let forms_line (x1, y1) (x2, y2) =
-    let range a b = Sequence.range ~start:`inclusive ~stop:`inclusive a b in
-    let seq =
-      if x1 = x2 then range y1 y2 |> Sequence.map ~f:(fun y -> (x1, y))
-      else if y1 = y2 then range x1 x2 |> Sequence.map ~f:(fun x -> (x, y1))
-      else failwith "Incorrect points for line"
-    in
-    Sequence.for_all seq ~f:(Hashtbl.mem positions)
-  in
-
-  let rec forms_rectangle (x1, y1) (x2, y2) =
-    let ((minx, miny) as _top_left) = (min x1 x2, min y1 y2)
-    and ((maxx, maxy) as _bot_right) = (max x1 x2, max y1 y2) in
-    x1 <> x2 && y1 <> y2
-    && maxx - minx > 5
-    && maxy - miny > 5
-    && forms_line (minx, miny) (minx, maxy)
-    && forms_line (maxx, miny) (maxx, maxy)
-    && forms_line (minx, miny) (maxx, miny)
-    && forms_line (minx, maxy) (maxx, maxy)
-  in
-
   let rec right_edge (x, y) =
-    match (x, y + 1) with next when is_robot next -> right_edge next | _ -> y
+    match (x, y + 1) with
+    | next when is_robot next -> right_edge next
+    | _ -> (x, y)
   in
   let rec bottom_edge (x, y) =
-    match (x + 1, y) with next when is_robot next -> bottom_edge next | _ -> x
+    match (x + 1, y) with
+    | next when is_robot next -> bottom_edge next
+    | _ -> (x, y)
   in
   Hashtbl.keys positions
   |> List.find ~f:(fun ((x, y) as p) ->
-         let maxx = bottom_edge p and maxy = right_edge p in
-         forms_rectangle p (maxx, maxy))
+         (* Assuming that we go from top left to bottom right corner of the frame:
+             - we can go `right->down` or `down->right` and it will be same point
+             - plus filter out too small frames (e.g. only 5 cells) *)
+         let maxx, maxy = bottom_edge (right_edge p) in
+         maxx - x > 5
+         && maxy - y > 5
+         && Myfield.Point.equal (maxx, maxy) (right_edge (bottom_edge p)))
   |> is_some
 
 let solve2 fname bounds =
   let robots = read_robots fname in
-  let i, final =
+  let i, _final =
     Sequence.unfold ~init:1 ~f:(fun s -> Some (s, s + 1))
-    |> Sequence.map ~f:(fun i ->
-           (i, robots |> List.map ~f:(move ~bounds ~time:i)))
+    |> Sequence.map ~f:(fun i -> (i, List.map robots ~f:(move ~bounds ~time:i)))
     |> Sequence.find_exn ~f:(fun (_i, robots) -> forms_frame robots)
   in
-  print_robots final ~bounds;
+  (* print_robots final ~bounds; *)
   i
 
 (* let () = assert (Util.time solve2 "data/day14.txt" (103, 101) = 6493) *)
