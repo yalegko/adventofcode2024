@@ -7,6 +7,12 @@ module Point = struct
   let neighbors (x, y) = [ (x + 1, y); (x, y + 1); (x - 1, y); (x, y - 1) ]
 end
 
+module PointWithDir = struct
+  type t = (int * int) * char [@@deriving compare, sexp, hash, equal]
+
+  let to_string p = p |> sexp_of_t |> Sexp.to_string_hum
+end
+
 module PointSet = Set.Make (Point)
 
 let of_string s =
@@ -28,3 +34,11 @@ let fold field ~init ~f =
 
 let print field =
   Array.iter field ~f:(fun row -> print_endline (String.of_array row))
+
+let do_step ~direction (x, y) =
+  match direction with
+  | '^' -> (x - 1, y)
+  | '>' -> (x, y + 1)
+  | 'v' -> (x + 1, y)
+  | '<' -> (x, y - 1)
+  | dir -> failwithf "Unexpected direction %c" dir ()
