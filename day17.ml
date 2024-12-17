@@ -89,72 +89,104 @@ let () =
 
 let make_bv ctx v = Z3.BitVector.mk_numeral ctx (string_of_int v) 64
 
-let symbol_exec ctx vm opcode op expected =
-  let make_bv v = make_bv ctx v in
-  let xor a b = Z3.BitVector.mk_xor ctx a b in
-  let shr a b = Z3.BitVector.mk_lshr ctx a b in
-  let mod8 bv = Z3.BitVector.mk_and ctx bv (make_bv 7) in
-  let eq a b = Z3.Boolean.mk_eq ctx a b in
-  let neq a b = Z3.Boolean.mk_not ctx (Z3.Boolean.mk_eq ctx a b) in
+class symbolicVM ctx a b c =
+  object (self)
+    val ctx = ctx
+    val mutable rax = a
+    val mutable rbx = b
+    val mutable rcx = c
+    method get_rax = rax
 
-  let symbol_combo op =
-    match op with
-    | v when v <= 3 -> make_bv v
-    | 4 -> vm.rax
-    | 5 -> vm.rbx
-    | 6 -> vm.rcx
-    | _ -> failwithf "invalid combo op %d" op ()
-  in
+    (* Arithmetic helpers *)
+    method eq a b = Z3.Boolean.mk_eq ctx a b
+    method neq a b = Z3.Boolean.mk_not ctx (self#eq a b)
+    method xor a b = Z3.BitVector.mk_xor ctx a b
+    method shr a b = Z3.BitVector.mk_lshr ctx a b
+    method mod8 bv = Z3.BitVector.mk_and ctx bv (self#make_bv 7)
+    method make_bv v = make_bv ctx v
 
-  match opcode_of_byte opcode with
-  | ADV -> ({ vm with rax = shr vm.rax (symbol_combo op) }, [])
-  | BXL -> ({ vm with rbx = xor vm.rbx (make_bv op) }, [])
-  | BST -> ({ vm with rbx = mod8 (symbol_combo op) }, [])
-  | JNZ ->
-      ( vm,
-        match expected with
-        | None -> [ eq vm.rax (make_bv 0) ]
-        | Some _ -> [ neq vm.rax (make_bv 0) ] )
-  | BXC -> ({ vm with rbx = xor vm.rbx vm.rcx }, [])
-  | OUT ->
-      ( vm,
-        match expected with
-        | None -> failwith "unreachable"
-        | Some v -> [ eq (mod8 (symbol_combo op)) (make_bv v) ] )
-  | BDV -> ({ vm with rbx = shr vm.rax (symbol_combo op) }, [])
-  | CDV -> ({ vm with rcx = shr vm.rax (symbol_combo op) }, [])
+    method combo op =
+      match op with
+      | v when v <= 3 -> self#make_bv v
+      | 4 -> rax
+      | 5 -> rbx
+      | 6 -> rcx
+      | _ -> failwithf "invalid combo op %d" op ()
+
+    method _exec opcode op =
+      match opcode_of_byte opcode with
+      | ADV -> rax <- self#shr rax (self#combo op)
+      | BXL -> rbx <- self#xor rbx (self#make_bv op)
+      | BST -> rbx <- self#mod8 (self#combo op)
+      | BXC -> rbx <- self#xor rbx rcx
+      | BDV -> rbx <- self#shr rax (self#combo op)
+      | CDV -> rcx <- self#shr rax (self#combo op)
+      | JNZ -> ()
+      | OUT -> ()
+
+    method constraints opcode op ~expected =
+      match opcode_of_byte opcode with
+      (* Do not finish right now -- perform a jump *)
+      | JNZ -> [ self#neq rax (self#make_bv 0) ]
+      (* Output the symbol we expecting *)
+      | OUT -> [ self#eq (self#mod8 (self#combo op)) (self#make_bv expected) ]
+      | _ -> []
+
+    (* We solve it with 2 assumptions:
+        1) We output only one symbol per run
+        2) We have only jump at the end of the program, so we can always safely do RIP+=2
+    *)
+    method execute program expected =
+      let rec loop rip constraints =
+        match read_op program rip with
+        | None -> constraints
+        | Some (opcode, op) ->
+            self#_exec opcode op;
+            let new_constraints = self#constraints opcode op ~expected in
+            loop (rip + 2) constraints @ new_constraints
+      in
+      loop 0 []
+  end
 
 let solve2 fname =
   let vm, program = read_device fname in
 
+  (* Ensure we have only 1 jump at the end of the program *)
+  let is_correct =
+    let rec loop rip opcodes =
+      match opcodes with
+      | opcode :: op :: _tail when opcode = 3 ->
+          op = 0 && rip = Array.length program - 2
+      | _ :: _ :: tail -> loop (rip + 2) tail
+      | _ -> failwith "unbalanced program"
+    in
+    loop 0 (List.of_array program)
+  in
+  assert is_correct;
+
+  (* Create z3 context *)
   let ctx = Z3.mk_context [ ("model", "true"); ("proof", "false") ] in
-  let rax = Z3.BitVector.mk_const ctx (Z3.Symbol.mk_string ctx "rax") 64 in
-  let vm =
-    { rax; rbx = make_bv ctx vm.rbx; rcx = make_bv ctx vm.rcx; rip = 0 }
-  in
-
   let solver = Z3.Optimize.mk_opt ctx in
-  let _vm =
-    Array.mapi program ~f:(fun i c -> (i, c))
-    |> Array.fold ~init:vm ~f:(fun vm (i, c) ->
-           let vm = { vm with rip = 0 } in
-           let is_last_iter = Array.length program - 1 = i in
-           let rec loop vm =
-             match read_op program vm.rip with
-             | None -> vm
-             | Some (opcode, op) ->
-                 let expected =
-                   if opcode = 3 && is_last_iter then None else Some c
-                 in
-                 let vm, constraints = symbol_exec ctx vm opcode op expected in
-                 Z3.Optimize.add solver constraints;
-                 loop { vm with rip = vm.rip + 2 }
-           in
-           loop vm)
-  in
 
+  (* Prepare the symbolic VM. RAX is a variable, other regs are values. *)
+  let rax = Z3.BitVector.mk_const ctx (Z3.Symbol.mk_string ctx "rax") 64 in
+  let vm = new symbolicVM ctx rax (make_bv ctx vm.rbx) (make_bv ctx vm.rcx) in
+
+  (* We iterate through whe expected output (our program) to collect expectations in the solver *)
+  (* 1) Do all but last and expect EAX to be != 0 to take a jump back *)
+  let program_but_last = Array.slice program 0 (Array.length program - 1) in
+  Array.iter program_but_last ~f:(fun expected ->
+      let constraints = vm#execute program expected in
+      Z3.Optimize.add solver constraints);
+
+  (* 2) Do the last iteration and do not expect the jump *)
+  Z3.Optimize.add solver (vm#execute program_but_last (Array.last program));
+  Z3.Optimize.add solver [ Z3.Boolean.mk_eq ctx vm#get_rax (make_bv ctx 0) ];
+
+  (* Ask z3 to minimize RAX value *)
   let _ = Z3.Optimize.minimize solver rax in
 
+  (* Extract the result from symbolic model *)
   match Z3.Optimize.check solver with
   | UNKNOWN -> failwith "unknown"
   | UNSATISFIABLE -> failwith "unsat"
