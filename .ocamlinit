@@ -7,6 +7,7 @@
 #require "ppx_compare";;
 #require "ppx_sexp_conv";;
 #require "z3";;
+#require "core_kernel.pairing_heap";;
 
 #mod_use "util.ml";;
 #mod_use "myfield.ml";;

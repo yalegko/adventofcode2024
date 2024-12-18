@@ -2,4 +2,4 @@
  (name advent2024)
  (public_name adventofcode2024)
  (preprocess (pps ppx_sexp_conv ppx_jane ppx_hash))
- (libraries core batteries re z3))
+ (libraries core batteries re z3 core_kernel.pairing_heap))
