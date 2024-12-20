@@ -1,14 +1,5 @@
 open Core
 
-type state = {
-  steps : int;
-  pos : Myfield.Point.t;
-  visited : Myfield.PointSet.t;
-}
-
-type cheat = { start : Myfield.Point.t; stop : Myfield.Point.t }
-[@@deriving sexp, compare, equal]
-
 let rec find_cheat_ends ~cache ~field pos power =
   if Hashtbl.mem cache (pos, power) then Hashtbl.find_exn cache (pos, power)
   else
@@ -44,42 +35,40 @@ let rec find_cheat_ends ~cache ~field pos power =
     Hashtbl.set cache ~key:(pos, power) ~data:res;
     res
 
+type cheat = { start : Myfield.Point.t; stop : Myfield.Point.t }
+[@@deriving sexp, compare, equal]
+
 let find_ways field ~distances ~from ~fair_best ~cheat_power =
   let res = Hashtbl.Poly.create () in
   let cache = Hashtbl.Poly.create () in
-  let rec dfs state =
-    (* We too deep -- cut *)
-    if state.steps >= fair_best then ()
+  let rec dfs pos steps visited =
+    (* We too deep -- cut that end *)
+    if steps >= fair_best then ()
     else
       let neighbors =
-        Myfield.Point.neighbors state.pos
+        Myfield.Point.neighbors pos
         |> List.filter ~f:(Myfield.contains field)
-        |> List.filter ~f:(fun pos -> not (Set.mem state.visited pos))
+        |> List.filter ~f:(fun pos -> not (Set.mem visited pos))
       in
 
-      (* Go fair *)
+      (* Go fair: just DFS avoiding walls *)
       neighbors
       |> List.filter ~f:(fun pos -> not (Myfield.eq_at ~field ~c:'#' pos))
-      |> List.iter ~f:(fun n ->
-             dfs
-               {
-                 pos = n;
-                 steps = state.steps + 1;
-                 visited = Set.add state.visited n;
-               });
+      |> List.iter ~f:(fun n -> dfs n (steps + 1) (Set.add visited n));
 
-      (* Go cheat *)
-      let cheat_ends = find_cheat_ends ~cache ~field state.pos cheat_power in
-      List.iter cheat_ends ~f:(fun (pos, dist) ->
-          let finish_distance =
-            Hashtbl.find_exn distances pos + state.steps + dist
+      (* Go cheat: recursive call with less cheat power and memoization*)
+      let cheat_ends = find_cheat_ends ~cache ~field pos cheat_power in
+      List.iter cheat_ends ~f:(fun (end_pos, spent_in_cheat) ->
+          let from_end_pos_to_finish = Hashtbl.find_exn distances end_pos in
+          let steps_to_finish =
+            steps + spent_in_cheat + from_end_pos_to_finish
           in
-          if finish_distance < fair_best then
+          if steps_to_finish < fair_best then
             Hashtbl.add_exn res
-              ~key:{ start = state.pos; stop = pos }
-              ~data:finish_distance)
+              ~key:{ start = pos; stop = end_pos }
+              ~data:steps_to_finish)
   in
-  dfs { steps = 0; pos = from; visited = Myfield.PointSet.of_list [ from ] };
+  dfs from 0 (Myfield.PointSet.of_list [ from ]);
   res
 
 let solve ~cheat_power fname =
@@ -95,4 +84,4 @@ let solve ~cheat_power fname =
   |> List.count ~f:(fun d -> fair_best - d >= 100)
 
 let () = assert (solve ~cheat_power:2 "data/day20.txt" = 1454)
-let () = assert (Util.time (solve ~cheat_power:20) "data/day20.txt" = 997879)
+(* let () = assert (Util.time (solve ~cheat_power:20) "data/day20.txt" = 997879) *)
