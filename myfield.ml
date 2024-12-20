@@ -21,6 +21,7 @@ let of_string s =
 let read file = In_channel.read_all file |> of_string
 let get field (i, j) = try Some field.(i).(j) with Invalid_argument _ -> None
 let contains field p = get field p |> is_some
+let eq_at ~field ~c p = get field p |> Option.exists ~f:(Char.equal c)
 
 let find field ~f =
   Array.mapi field ~f:(fun i row ->
