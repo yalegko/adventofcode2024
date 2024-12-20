@@ -1,156 +1,98 @@
 open Core
 
-let calc_distances field ~start =
-  let cmp_dist (_pos1, dist1) (_pos2, dist2) = compare dist1 dist2 in
-  let queue = Pairing_heap.of_list ~cmp:cmp_dist [ (start, 0) ] in
-  let visited = Hashtbl.create (module Myfield.Point) in
-  let distances = Hashtbl.create (module Myfield.Point) in
-  let rec dijkstra () =
-    match Pairing_heap.pop queue with
-    | None -> distances
-    | Some (pos, _dist) when Hashtbl.mem visited pos -> dijkstra ()
-    | Some (pos, dist) ->
-        Hashtbl.set visited ~key:pos ~data:();
-
-        let perspective_neighbors =
-          Myfield.Point.neighbors pos
-          |> List.filter ~f:(Myfield.contains field)
-          |> List.filter ~f:(fun n -> not (Myfield.eq_at ~field ~c:'#' n))
-          |> List.filter ~f:(fun n ->
-                 match Hashtbl.find distances n with
-                 | None -> true
-                 | Some d -> dist + 1 < d)
-        in
-
-        List.iter perspective_neighbors ~f:(fun n ->
-            Hashtbl.set distances ~key:n ~data:(dist + 1);
-            Pairing_heap.add queue (n, dist + 1));
-
-        dijkstra ()
-  in
-  dijkstra ()
-
 type state = {
-  pos : Myfield.Point.t;
-  cheat : Myfield.Point.t option;
-  cheat_stop : Myfield.Point.t option;
-  cheat_duration : int;
   steps : int;
+  pos : Myfield.Point.t;
   visited : Myfield.PointSet.t;
 }
-[@@deriving sexp]
 
 type cheat = { start : Myfield.Point.t; stop : Myfield.Point.t }
 [@@deriving sexp, compare, equal]
 
+let rec find_cheat_ends ~cache ~field pos power =
+  if Hashtbl.mem cache (pos, power) then Hashtbl.find_exn cache (pos, power)
+  else
+    let res =
+      if power = 0 then
+        (* No more cheat power. Stopping at safe place *)
+        if Myfield.eq_at ~field ~c:'#' pos then [] else [ (pos, 0) ]
+      else
+        (* Find all possible ends for the neighbours *)
+        let neighbors_ends =
+          Myfield.Point.neighbors pos
+          |> List.filter ~f:(Myfield.contains field)
+          |> List.concat_map ~f:(fun n ->
+                 find_cheat_ends ~cache ~field n (power - 1))
+        in
+        (* As we do not try be optimal here -- for each end find a minimal distance to it *)
+        let best_ends =
+          neighbors_ends
+          |> List.fold
+               ~init:(Hashtbl.create (module Myfield.Point))
+               ~f:(fun acc (point, dist) ->
+                 Hashtbl.update acc point ~f:(function
+                   | None -> dist
+                   | Some existing_dist -> Int.min existing_dist dist);
+                 acc)
+          |> Hashtbl.to_alist
+          |> List.map ~f:(fun (p, d) -> (p, d + 1))
+        in
+        (* Also we don't need to exhhaust the cheat power, so if we can stop here -- stop *)
+        if Myfield.eq_at ~field ~c:'#' pos then best_ends
+        else (pos, 0) :: best_ends
+    in
+    Hashtbl.set cache ~key:(pos, power) ~data:res;
+    res
+
 let find_ways field ~distances ~from ~fair_best ~cheat_power =
   let res = Hashtbl.Poly.create () in
-  let rec bfs queue =
-    match queue with
-    | [] -> res
-    (*
-       Nah, too long
-    *)
-    | { steps; _ } :: tail when steps >= fair_best -> bfs tail
-    (*
-       Woops. Crashed
-    *)
-    | { pos; cheat_duration = 0; _ } :: tail
-      when Myfield.eq_at ~field ~c:'#' pos ->
-        bfs tail
-    (*
-       Reached finish with active cheat. Good job!
-    *)
-    | { pos; steps; cheat = Some cheat_start; _ } :: tail
-      when Myfield.eq_at ~field ~c:'E' pos ->
-        Hashtbl.add_exn res ~key:{ start = cheat_start; stop = pos } ~data:steps;
-        bfs tail
-    (*
-       Cheat ended. Calculate the distance to the finish
-    *)
-    | ({ cheat = Some start; cheat_stop = Some stop; _ } as state) :: tail ->
-        let finish_distance =
-          Hashtbl.find_exn distances state.pos + state.steps
-        in
-        if finish_distance < fair_best then
-          Hashtbl.add_exn res ~key:{ start; stop } ~data:finish_distance;
-        bfs tail
-    (*
-       Looking for a place to cheat
-    *)
-    | state :: tail ->
-        let neighbors =
-          Myfield.Point.neighbors state.pos
-          |> List.filter ~f:(Myfield.contains field)
-          |> List.filter ~f:(fun pos -> not (Set.mem state.visited pos))
-        in
+  let cache = Hashtbl.Poly.create () in
+  let rec dfs state =
+    (* We too deep -- cut *)
+    if state.steps >= fair_best then ()
+    else
+      let neighbors =
+        Myfield.Point.neighbors state.pos
+        |> List.filter ~f:(Myfield.contains field)
+        |> List.filter ~f:(fun pos -> not (Set.mem state.visited pos))
+      in
 
-        (* Free way could just land here *)
-        let free_steps =
-          neighbors
-          |> List.filter ~f:(Fun.negate (Myfield.eq_at ~field ~c:'#'))
-          |> List.map ~f:(fun pos -> { state with pos })
-        in
+      (* Go fair *)
+      neighbors
+      |> List.filter ~f:(fun pos -> not (Myfield.eq_at ~field ~c:'#' pos))
+      |> List.iter ~f:(fun n ->
+             dfs
+               {
+                 pos = n;
+                 steps = state.steps + 1;
+                 visited = Set.add state.visited n;
+               });
 
-        (* If we still can activate or use a cheat -- step on the walls as well *)
-        let walls = neighbors |> List.filter ~f:(Myfield.eq_at ~field ~c:'#') in
-        let cheat_steps =
-          match state.cheat with
-          | None ->
-              walls
-              |> List.map ~f:(fun pos ->
-                     {
-                       state with
-                       pos;
-                       cheat = Some pos;
-                       cheat_duration = cheat_power;
-                     })
-          | Some _ when state.cheat_duration > 0 ->
-              walls |> List.map ~f:(fun pos -> { state with pos })
-          | _ ->
-              failwith
-                (sprintf "unreachable: %s"
-                   (sexp_of_state state |> Sexp.to_string_hum))
-        in
-
-        (* Increase steps, decrease cheat active time *)
-        let next =
-          free_steps @ cheat_steps
-          |> List.map ~f:(fun state ->
-                 {
-                   state with
-                   steps = state.steps + 1;
-                   visited = Set.add state.visited state.pos;
-                   cheat_duration = state.cheat_duration - 1;
-                   cheat_stop =
-                     (if state.cheat_duration = 1 then Some state.pos else None);
-                 })
-        in
-
-        bfs (tail @ next)
+      (* Go cheat *)
+      let cheat_ends = find_cheat_ends ~cache ~field state.pos cheat_power in
+      List.iter cheat_ends ~f:(fun (pos, dist) ->
+          let finish_distance =
+            Hashtbl.find_exn distances pos + state.steps + dist
+          in
+          if finish_distance < fair_best then
+            Hashtbl.add_exn res
+              ~key:{ start = state.pos; stop = pos }
+              ~data:finish_distance)
   in
-  bfs
-    [
-      {
-        pos = from;
-        cheat = None;
-        cheat_stop = None;
-        cheat_duration = 0;
-        steps = 0;
-        visited = Myfield.PointSet.of_list [ from ];
-      };
-    ]
+  dfs { steps = 0; pos = from; visited = Myfield.PointSet.of_list [ from ] };
+  res
 
-let solve1 fname =
+let solve ~cheat_power fname =
   let field = Myfield.read fname in
   let start = Myfield.find field ~f:(Char.equal 'S') |> List.hd_exn in
   let finish = Myfield.find field ~f:(Char.equal 'E') |> List.hd_exn in
-  let distances = calc_distances field ~start:finish in
+  let distances = Myfield.calc_distances field ~start:finish in
   let fair_best = Hashtbl.find_exn distances start in
 
-  find_ways field ~distances ~from:start ~fair_best ~cheat_power:2
+  find_ways field ~distances ~from:start ~fair_best ~cheat_power
   |> Hashtbl.Poly.to_alist
   |> List.map ~f:(fun (_cheat, dist) -> dist)
   |> List.count ~f:(fun d -> fair_best - d >= 100)
 
-let () = assert (solve1 "data/day20.txt" = 1454)
+let () = assert (solve ~cheat_power:2 "data/day20.txt" = 1454)
+let () = assert (Util.time (solve ~cheat_power:20) "data/day20.txt" = 997879)
