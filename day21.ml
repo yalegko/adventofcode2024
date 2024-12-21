@@ -59,68 +59,65 @@ let path_to_keys path =
 let pad_coord ~pad ch =
   Myfield.find pad ~f:(fun c -> Char.equal c ch) |> List.hd_exn
 
-let rec cartesian_product = function
-  | [] -> [ [] ]
-  | lst :: tail ->
-      let tail_product = cartesian_product tail in
-      List.concat_map lst ~f:(fun x ->
-          List.map tail_product ~f:(fun variant -> x :: variant))
-
-let cached_shortest_paths ~pad =
-  print_endline "Recreating cache";
-  let memo = Hashtbl.create (module String) in
-  let impl from' to' =
-    let memo_key = String.of_list [ from'; to' ] in
-    match Hashtbl.find memo memo_key with
-    | Some res -> res
-    | None ->
-        let res =
-          shortest_paths
-            ~neighbors:(pad_neighbours ~field:pad)
-            ~start:(pad_coord ~pad from') ~finish:(pad_coord ~pad to')
-          |> List.map ~f:path_to_keys
-        in
-        Hashtbl.set memo ~key:memo_key ~data:res;
-        print_endline (sprintf "Cached %d" (Hashtbl.length memo));
-        res
-  in
-  impl
-
-let shortest_numpad_paths = cached_shortest_paths ~pad:numpad
-let shortest_keypad_paths = cached_shortest_paths ~pad:keypad
-
 let keypad_paths ~pathf to_press =
   list_to_pairs ('A' :: to_press)
   |> List.map ~f:(fun (from', to') -> pathf from' to')
-  |> cartesian_product
-  |> List.map ~f:(fun path -> path |> List.concat)
 
-let code_paths code =
-  keypad_paths ~pathf:shortest_numpad_paths ('A' :: String.to_list code)
+let arrows_path2 p =
+  keypad_paths
+    ~pathf:(fun a b ->
+      shortest_paths
+        ~neighbors:(pad_neighbours ~field:keypad)
+        ~start:(pad_coord ~pad:keypad a) ~finish:(pad_coord ~pad:keypad b))
+    p
+  |> List.map ~f:(fun lst -> List.map lst ~f:path_to_keys)
 
-let arrows_path path = keypad_paths ~pathf:shortest_keypad_paths ('A' :: path)
+let shortest_path3 =
+  let cache = Hashtbl.Poly.create () in
+  let rec loop ~depth path =
+    match Hashtbl.Poly.find cache (depth, String.of_list path) with
+    | Some res -> res
+    | None ->
+        let lenf =
+          match depth with 0 -> List.length | _ -> loop ~depth:(depth - 1)
+        in
 
-let select_shortest paths =
-  List.fold_left paths ~init:(100500, [])
-    ~f:(fun (shortest, shortest_paths) path ->
-      match List.length path with
-      | l when l < shortest -> (l, [ path ])
-      | l when l = shortest -> (shortest, path :: shortest_paths)
-      | _ -> (shortest, shortest_paths))
-  |> snd
+        let res =
+          arrows_path2 path
+          |> List.map ~f:(fun component ->
+                 component
+                 |> List.map ~f:(fun path -> lenf path)
+                 |> List.min_elt ~compare |> Option.value_exn)
+          |> List.reduce_exn ~f:( + )
+        in
+        Hashtbl.Poly.set cache ~key:(depth, String.of_list path) ~data:res;
+        res
+  in
+  loop
 
-let shortest_code_len code =
-  code_paths code
-  |> List.concat_map ~f:arrows_path
-  |> select_shortest
-  |> List.concat_map ~f:arrows_path
-  |> List.map ~f:List.length |> List.min_elt ~compare |> Option.value_exn
+let calc_string3 ~depth s =
+  let parts =
+    keypad_paths
+      ~pathf:(fun a b ->
+        shortest_paths
+          ~neighbors:(pad_neighbours ~field:numpad)
+          ~start:(pad_coord ~pad:numpad a) ~finish:(pad_coord ~pad:numpad b))
+      (String.to_list s)
+    |> List.map ~f:(fun lst -> List.map lst ~f:path_to_keys)
+  in
 
-let solve1 fname =
-  let codes = In_channel.read_lines fname in
-  List.map codes ~f:(fun code -> (code, shortest_code_len code))
-  |> List.map ~f:(fun (code, len) ->
-         int_of_string (String.drop_suffix code 1) * len)
+  parts
+  |> List.map ~f:(fun component ->
+         component |> List.map ~f:(fun variant -> shortest_path3 ~depth variant))
+  |> List.map ~f:(fun lst -> List.min_elt ~compare lst |> Option.value_exn)
   |> List.reduce_exn ~f:( + )
 
-let () = assert (Util.time solve1 "data/day21.txt" = 132453)
+let solve ~depth fname =
+  In_channel.read_lines fname
+  |> List.map ~f:(fun code ->
+         int_of_string (String.drop_suffix code 1) * calc_string3 ~depth code)
+  |> List.reduce_exn ~f:( + )
+
+let () = assert (solve ~depth:1 "test/day21.txt" = 126384)
+let () = assert (solve ~depth:1 "data/day21.txt" = 123096)
+let () = assert (solve ~depth:24 "data/day21.txt" = 154517692795352)
